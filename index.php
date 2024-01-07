@@ -4,7 +4,7 @@ date_default_timezone_set('CET'); // modify if not Europe/Berlin
 include "./lib/strings.php";
 include "./lib/file.php";
 
-$title = "=== shelly-web-overview v1.1 ===";
+$title = "=== shelly-web-overview v1.2 ===";
 /* tested 2024-01-05 with stock firmware Shelly PlusPlugS firmware v1.1.0 web build 8372d8c8
  * 
  * what is it?
@@ -27,7 +27,6 @@ $config = config_read();
 $input_date = ""; // holds the date to show 2023-12-12 or all (all dates from all logs = can be A LOT OF DATAPOINTS (like millions) = heavy on CPU client side js)
 $input_last_parameter = ""; // the last parameter used
 
-$array_stats = array(); // hold all timestamps with same index positions as in $lines_less
 $stats_kWh_used = 0;
 
 /* hold the data */
@@ -72,7 +71,7 @@ if(empty($input_date)) $input_date = "all";
 if(isset($_REQUEST["shelly_to_show_ip"])) // which shelly to display
 {
     $shelly_to_show_ip = htmlspecialchars($_REQUEST["shelly_to_show_ip"]);
-    $input_last_parameter = $input_last_parameter."&shelly_to_show_ip=".shelly_to_show_ip;
+    $input_last_parameter = $input_last_parameter."&shelly_to_show_ip=".$shelly_to_show_ip;
 }
 
 if(isset($_REQUEST["auto_reload"]))
@@ -121,7 +120,7 @@ foreach($array_files_all as $key => $value)
     {
         $line = clean_string($line); // remove trailing newline
         if(empty($line)) continue; // if line is empty, skip it
-        
+
         $line = str_replace("[", "",$line); // remove all [
         $line = str_replace("]", "",$line); // remove all ]
         $line = str_replace("(", " ",$line); // remove all ( and replace with " " because it is needed as separator
@@ -131,29 +130,50 @@ foreach($array_files_all as $key => $value)
         $ip = $line_segments[3]; // extract ip of shelly
         $data = $line_segments[4];
 
-        $values = array();
-
-        $pattern1 = '/"apower":([\d.]+), "voltage":([\d.]+), "current":([\d.]+)/'; // extract apower, voltage, current
-        preg_match($pattern1, $data, $matches1);
-        // $values["apower"] = (float)$matches1[1]; // problem: these values seem to be incorrect
-        $values["voltage"] = (float)$matches1[2];
-        $values["current"] = (float)$matches1[3];
-
-        // recalc watts used
-        $values["apower"] = $values["voltage"] * $values["current"]; // correct incorrect watt values by recalc via V and A values
-
-        // extract timestamp
-        $pattern2 = '/"unixtime":(\d+)/';
-        preg_match($pattern2, $data, $matches2);
-        $unixtime = $matches2[1];
-        
-        if(!empty($unixtime))
+        if(!(empty($data)))
         {
-            $shellies[$ip][$unixtime] = $values;
-        }
-        else 
-        {
-            $unixtime; // regex extracting unixtime from data failed :( WHY? WHY?
+            $values = array();
+    
+            $pattern1 = '/"apower":([\d.]+),"voltage":([\d.]+),"current":([\d.]+)/'; // extract apower, voltage, current
+            preg_match($pattern1, $data, $matches1);
+            // $values["apower"] = (float)$matches1[1]; // problem: these values seem to be incorrect
+            if(isset($matches1[2]))
+            {
+                $values["voltage"] = (float)$matches1[2];
+            }
+            else
+            {
+                $values;
+            }
+            if(isset($matches1[3]))
+            {
+                $values["current"] = (float)$matches1[3];
+            }
+            else
+            {
+                $values;
+            }
+    
+            if(empty($values["voltage"]))
+            {
+                $values["voltage"];
+            }
+            // recalc watts used
+            $values["apower"] = $values["voltage"] * $values["current"]; // correct incorrect watt values by recalc via V and A values
+    
+            // extract timestamp
+            $pattern2 = '/"unixtime":(\d+)/';
+            preg_match($pattern2, $data, $matches2);
+            $unixtime = $matches2[1];
+            
+            if(!empty($unixtime))
+            {
+                $shellies[$ip][$unixtime] = $values;
+            }
+            else 
+            {
+                $unixtime; // regex extracting unixtime from data failed :( WHY? WHY?
+            }
         }
     }
 }
@@ -163,17 +183,38 @@ if(empty($shelly_to_show_ip))
     $shelly_to_show_ip = array_key_first($shellies);
 }
 
-// build chart.js data strings
+// build chart.js data strings + calc kWh stats
 foreach($shellies as $ip => $shelly)
 {
     if($shelly_to_show_ip == $ip)
     {
+        $unixtime_previous = 0;
         foreach($shelly as $unixtime => $values)
         {
+            // calc time difference since last datapoint, it is assumed that wattage stayed the same in this period
+            if($unixtime_previous == 0)
+            {
+                $time_diff_ms = 0;
+            }
+            else
+            {
+                $time_diff_ms = $unixtime - $unixtime_previous;
+            }
+            
+            $time_diff_h = $time_diff_ms / 3600000;
+
+            if(isset($values["apower"]))
+            {
+                $watts = $values["apower"];
+                $stats_kWh_used = $stats_kWh_used + ($watts * $time_diff_h); // calc kWh
+            }
+
             $chart_data_string_date = $chart_data_string_date.$unixtime.", ";
             $chart_data_string_batt_volt = $chart_data_string_batt_volt.$values["voltage"].", ";
             $chart_data_string_current = $chart_data_string_current.$values["current"].", ";
             $chart_data_string_used_watts = $chart_data_string_used_watts.$values["apower"].", ";
+
+            $unixtime_previous = $unixtime;
         }
     }
 }
@@ -227,7 +268,7 @@ const data = [
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-   <meta http-equiv="refresh" content="<?php if($config["auto_reload_string"] == "on"){ echo ($config["refresh_auto"]*60).";URL=index.php"; } ?>"/>
+   <meta http-equiv="refresh" content="<?php if($config["auto_reload_string"] == "on"){ echo ($config["refresh_auto"]*60).";URL=index.php?".$input_last_parameter; } ?>"/>
   <title><?php echo $title; ?></title>
   <!-- Include Chart.js library -->
   <script src="js/chart.js"></script>
@@ -254,8 +295,16 @@ const data = [
     		?>
     	</div>
     	<div id="div4" style="position: relative; float: left; min-width: 100%;">
-    		<a class="link_button_orange" href="./index.php?date=all">ShowAll</a>
     		<?php
+    		if($input_date = "all")
+    		{
+    		    echo '<a class="link_button_orange_active" href="./index.php?date=all">ShowAll</a>';
+    		}
+    		else 
+    		{
+    		    echo '<a class="link_button_orange" href="./index.php?date=all">ShowAll</a>';
+    		}
+
     		foreach($array_files_all as $key => $value)
     		{
     		    if($input_date == $value)
@@ -271,11 +320,11 @@ const data = [
 			<?php
                 if($config["auto_reload_string"] == "on")
                 {
-                    echo '<a title="turn auto reload every '.$config["refresh_auto"].'min on or off" id="button_enabled" class="link_button_orange" href="./index.php?date='.json_decode($_COOKIE['date'], true).'&auto_reload=off">auto_reload_on</a>';
+                    echo '<a title="turn auto reload every '.$config["refresh_auto"].'min on or off" id="button_enabled" class="link_button_orange" href="./index.php?'.$input_last_parameter.'&auto_reload=off">auto_reload_on</a>';
                 }
                 else
                 {
-                    echo '<a title="turn auto reload every '.$config["refresh_auto"].'min on or off" id="button_disabled" class="link_button_orange" href="./index.php?date='.json_decode($_COOKIE['date'], true).'&auto_reload=on">auto_reload_off</a>';
+                    echo '<a title="turn auto reload every '.$config["refresh_auto"].'min on or off" id="button_disabled" class="link_button_orange" href="./index.php?'.$input_last_parameter.'&auto_reload=on">auto_reload_off</a>';
                 }
 			?>
 
