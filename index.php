@@ -140,6 +140,8 @@ foreach($array_files_all as $key => $value)
             if(isset($matches1[2]))
             {
                 $values["voltage"] = (float)$matches1[2];
+                // round to 2x digits behind the dot (123.12)
+                $values["voltage"] = number_format($values["voltage"], 2, '.', '');
             }
             else
             {
@@ -148,6 +150,8 @@ foreach($array_files_all as $key => $value)
             if(isset($matches1[3]))
             {
                 $values["current"] = (float)$matches1[3];
+                // round to 2x digits behind the dot (123.12)
+                $values["current"] = number_format($values["current"], 2, '.', '');
             }
             else
             {
@@ -160,6 +164,12 @@ foreach($array_files_all as $key => $value)
             }
             // recalc watts used
             $values["apower"] = $values["voltage"] * $values["current"]; // correct incorrect watt values by recalc via V and A values
+            
+            // round to full integer
+            $values["apower"] = round($values["apower"], 0);
+            
+            // round to 2x digits behind the dot (123.12)
+            // $values["apower"] = number_format($values["apower"], 2, '.', '');
     
             // extract timestamp
             $pattern2 = '/"unixtime":(\d+)/';
